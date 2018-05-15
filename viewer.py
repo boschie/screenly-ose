@@ -34,6 +34,7 @@ __license__ = "Dual License: GPLv2 and Commercial License"
 SPLASH_DELAY = 60  # secs
 EMPTY_PL_DELAY = 5  # secs
 
+INITIALIZED_FILE = '/.screenly/initialized'
 BLACK_PAGE = '/tmp/screenly_html/black_page.html'
 WATCHDOG_PATH = '/tmp/screenly.watchdog'
 SCREENLY_HTML = '/tmp/screenly_html/'
@@ -426,18 +427,12 @@ def setup():
 def main():
     setup()
 
-    if not path.isfile(path.join(HOME, '.screenly/wifi_set')):
-        if not gateways().get('default'):
-            url = 'http://{0}:{1}/hotspot'.format(LISTEN, PORT)
-            load_browser(url=url)
+    if not path.isfile(HOME + INITIALIZED_FILE) and not gateways().get('default'):
+        url = 'http://{0}/hotspot'.format(LISTEN)
+        load_browser(url=url)
 
-            while not gateways().get('default'):
-                sleep(2)
-            if LISTEN == '127.0.0.1':
-                sh.sudo('nginx')
-
-        with open(path.join(HOME, '.screenly/wifi_set'), 'a'):
-            pass
+        while not path.isfile(HOME + INITIALIZED_FILE):
+            sleep(1)
 
     url = 'http://{0}:{1}/splash_page'.format(LISTEN, PORT) if settings['show_splash'] else 'file://' + BLACK_PAGE
     browser_url(url=url)
