@@ -1,5 +1,5 @@
 Mako==0.7.3
-MarkupSafe==0.15
+MarkupSafe==1.0
 ansible==2.1.0.0
 certifi==2015.04.28
 cffi==1.7.0
@@ -23,7 +23,7 @@ pytz==2012d
 pyzmq==16.0.2
 requests[security]==2.10.0
 sh==1.08
-six==1.8.0
+six==1.11.0
 uptime==2.0.2
 werkzeug==0.10.4
 wsgiref==0.1.2
