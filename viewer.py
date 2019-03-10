@@ -10,7 +10,7 @@ from threading import Thread
 from mixpanel import Mixpanel, MixpanelException
 from netifaces import gateways
 from requests import get as req_get
-from signal import signal, SIGUSR1
+from signal import alarm, signal, SIGALRM, SIGUSR1
 from time import sleep
 import logging
 import random
@@ -18,6 +18,7 @@ import sh
 import string
 import zmq
 
+from lib.errors import SigalrmException
 from settings import settings, LISTEN, PORT
 import html_templates
 from lib.github import fetch_remote_hash, remote_branch_available
@@ -52,6 +53,13 @@ arch = None
 db_conn = None
 
 scheduler = None
+
+
+def sigalrm(signum, frame):
+    """
+    Signal just throw an SigalrmException
+    """
+    raise SigalrmException("SigalrmException")
 
 
 def sigusr1(signum, frame):
@@ -175,13 +183,14 @@ class Scheduler(object):
         # Try to keep the same position in the play list. E.g. if a new asset is added to the end of the list, we
         # don't want to start over from the beginning.
         self.index = self.index % len(self.assets) if self.assets else 0
-        logging.debug('update_playlist done, count %s, counter %s, index %s, deadline %s', len(self.assets), self.counter, self.index, self.deadline)
+        logging.debug('update_playlist done, count %s, counter %s, index %s, deadline %s', len(self.assets),
+                      self.counter, self.index, self.deadline)
 
     def get_db_mtime(self):
         # get database file last modification time
         try:
             return path.getmtime(settings['database'])
-        except:
+        except (OSError, TypeError):
             return 0
 
 
@@ -239,14 +248,30 @@ def load_browser(url=None):
     browser_send(uzbl_rc)
 
 
+def browser_get_event():
+    alarm(10)
+    try:
+        event = browser.next()
+    except SigalrmException:
+        return None
+    alarm(0)
+    return event
+
+
 def browser_send(command, cb=lambda _: True):
     if not (browser is None) and browser.process.alive:
         while not browser.process._pipe_queue.empty():  # flush stdout
-            browser.next()
+            browser_get_event()
 
         browser.process.stdin.put(command + '\n')
         while True:  # loop until cb returns True
-            if cb(browser.next()):
+            try:
+                browser_event = browser_get_event()
+            except StopIteration:
+                break
+            if not browser_event:
+                break
+            if cb(browser_event):
                 break
     else:
         logging.info('browser found dead, restarting')
@@ -255,7 +280,8 @@ def browser_send(command, cb=lambda _: True):
 
 def browser_clear(force=False):
     """Load a black page. Default cb waits for the page to load."""
-    browser_url('file://' + BLACK_PAGE, force=force, cb=lambda buf: 'LOAD_FINISH' in buf and BLACK_PAGE in buf)
+    browser_url('file://' + BLACK_PAGE, force=force,
+                cb=lambda buf: 'LOAD_FINISH' in buf and BLACK_PAGE in buf)
 
 
 def browser_url(url, cb=lambda _: True, force=False):
@@ -276,7 +302,8 @@ def browser_url(url, cb=lambda _: True, force=False):
 
 def view_image(uri):
     browser_clear()
-    browser_send('js window.setimg("{0}")'.format(uri), cb=lambda b: 'COMMAND_EXECUTED' in b and 'setimg' in b)
+    browser_send('js window.setimg("{0}")'.format(uri),
+                 cb=lambda b: 'COMMAND_EXECUTED' in b and 'setimg' in b)
 
 
 def view_video(uri, duration):
@@ -343,6 +370,8 @@ def check_update():
                 mp.track(device_id, 'Version', {
                     'Branch': str(git_branch),
                     'Hash': str(git_hash),
+                    'NOOBS': path.isfile('/boot/os_config.json'),
+                    'Balena': bool(getenv('RESIN_APP_NAME', False)) or bool(getenv('BALENA_APP_NAME', False))
                 })
             except MixpanelException:
                 pass
@@ -384,7 +413,7 @@ def asset_loop(scheduler):
         view_image(HOME + LOAD_SCREEN)
         sleep(EMPTY_PL_DELAY)
 
-    elif path.isfile(asset['uri']) or not url_fails(asset['uri']):
+    elif path.isfile(asset['uri']) or (not url_fails(asset['uri']) or asset['skip_asset_check']):
         name, mime, uri = asset['name'], asset['mimetype'], asset['uri']
         logging.info('Showing asset %s (%s)', name, mime)
         logging.debug('Asset URI %s', uri)
@@ -405,6 +434,7 @@ def asset_loop(scheduler):
             duration = int(asset['duration'])
             logging.info('Sleeping for %s', duration)
             sleep(duration)
+
     else:
         logging.info('Asset %s at %s is not available, skipping.', asset['name'], asset['uri'])
         sleep(0.5)
@@ -416,6 +446,7 @@ def setup():
     arch = machine()
 
     signal(SIGUSR1, sigusr1)
+    signal(SIGALRM, sigalrm)
 
     load_settings()
     db_conn = db.conn(settings['database'])
@@ -447,6 +478,9 @@ def main():
     subscriber.daemon = True
     subscriber.start()
 
+    # We don't want to show splash_page if there are active assets but all of them are not available
+    view_image(HOME + LOAD_SCREEN)
+
     logging.debug('Entering infinite loop.')
     while True:
         asset_loop(scheduler)
@@ -455,6 +489,6 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except:
+    except Exception:
         logging.exception("Viewer crashed.")
         raise

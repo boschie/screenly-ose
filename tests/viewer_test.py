@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# -*- coding: utf8 -*-
+# -*- coding: utf-8 -*-
 
 from nose.tools import ok_, eq_
 from nose.plugins.attrib import attr
@@ -66,6 +66,9 @@ class TestBrowserSend(ViewerTestCase):
 
         self.u.browser_send('test_cmd')
         m_put.assert_called_once_with('test_cmd\n')
+
+        self.u.browser_send('event TITLE 标题')
+        m_put.assert_called_with('event TITLE \xe6\xa0\x87\xe9\xa2\x98\n')
 
     def test_dead(self):
         self.p_loadb.start()
